@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -105,10 +107,14 @@ def test_datadog_adapter() -> None:
 
 def test_api_roundtrip(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(ROOT)
+    from sre_coworker import config
     from sre_coworker.api import app
 
+    monkeypatch.setattr(config.settings, "webhook_secret", "s3cret")
     client = TestClient(app)
-    r = client.post("/webhooks/generic", json=payments_alert().model_dump(mode="json"))
+    body = payments_alert().model_dump_json().encode()
+    sig = "sha256=" + hmac.new(b"s3cret", body, hashlib.sha256).hexdigest()
+    r = client.post("/webhooks/generic", content=body, headers={"X-Signature-256": sig})
     assert r.status_code == 200
     inc = r.json()
     assert inc["state"] == "awaiting_approval"
@@ -116,4 +122,11 @@ def test_api_roundtrip(monkeypatch: pytest.MonkeyPatch) -> None:
     assert r.status_code == 200
     assert r.json()["state"] == "actions_dispatched"
     assert client.post(f"/incidents/{inc['id']}/approve", json={"by": "maya"}).status_code == 409
-    assert client.post("/webhooks/pagerduty", json={}).status_code == 404
+    r = client.post(
+        "/webhooks/pagerduty",
+        content=b"{}",
+        headers={
+            "X-Signature-256": "sha256=" + hmac.new(b"s3cret", b"{}", hashlib.sha256).hexdigest()
+        },
+    )
+    assert r.status_code == 404

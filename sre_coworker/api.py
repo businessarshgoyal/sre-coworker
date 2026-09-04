@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel
 
 from sre_coworker.adapters import ADAPTERS
@@ -25,16 +28,36 @@ async def health() -> dict[str, Any]:
         "dry_run": settings.dry_run,
         "jira_live": settings.jira_live,
         "devin_live": settings.devin_live,
+        "webhook_enabled": bool(settings.webhook_secret),
+        "queue_backend": settings.queue_backend,
         "runbooks": [rb.slug for rb in coworker.runbooks],
     }
 
 
+def verify_signature(secret: str, body: bytes, signature: str | None) -> bool:
+    """Expects `X-Signature-256: sha256=<hex hmac of raw body>`."""
+    if not signature or not signature.startswith("sha256="):
+        return False
+    expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature.removeprefix("sha256="))
+
+
 @app.post("/webhooks/{source}", response_model=Incident)
-async def webhook(source: str, payload: dict[str, Any]) -> Incident:
+async def webhook(
+    source: str,
+    request: Request,
+    x_signature_256: str | None = Header(default=None),
+) -> Incident:
+    """Push ingestion. Disabled unless SRE_WEBHOOK_SECRET is set; prefer `sre-coworker consume`."""
+    if not settings.webhook_secret:
+        raise HTTPException(403, "webhook ingestion disabled; use a queue backend")
+    body = await request.body()
+    if not verify_signature(settings.webhook_secret, body, x_signature_256):
+        raise HTTPException(401, "invalid signature")
     adapter = ADAPTERS.get(source)
     if adapter is None:
         raise HTTPException(404, f"unknown alert source '{source}'")
-    return await coworker.handle_alert(adapter(payload))
+    return await coworker.handle_alert(adapter(json.loads(body)))
 
 
 @app.get("/incidents", response_model=list[Incident])

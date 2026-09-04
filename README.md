@@ -5,10 +5,10 @@ An SRE triage coworker: **alert → root-cause brief → human approval → Jira
 The triage is deterministic and citation-backed (no LLM in the loop): every claim in the brief points at a deploy, a runbook, or an existing ticket. The expensive, judgment-heavy part — actually writing the fix — is delegated to Devin via its API.
 
 ```
-Datadog / Sentry / generic webhook
-        │
+Datadog / Sentry / your pipeline
+        │  publish to Pub/Sub · SNS→SQS · Redis Stream   (pull-based, no inbound port)
         ▼
-  normalise Alert ──► correlate recent deploys (GitHub commits or a JSON file)
+  sre-coworker consume  ──► normalise Alert ──► correlate recent deploys (GitHub commits or a JSON file)
                   ──► match runbooks (markdown + front-matter, ./runbooks)
                   ──► dedupe against open tickets (Jira JQL or a JSON file)
         │
@@ -45,14 +45,42 @@ sre-coworker triage examples/alert_orders_timeout.json --approve
 sre-coworker triage examples/datadog_webhook.json --source datadog
 ```
 
-Run as a service:
+## Ingestion: pull from a queue (recommended)
+
+The coworker *subscribes*; it never has to accept inbound HTTP. Auth is the cloud IAM of the queue, and delivery is at-least-once with ack/nack (unknown sources are acked as poison, triage failures are nacked for redelivery).
+
+| Backend | Install | Env | Route alerts in |
+|---|---|---|---|
+| Google Pub/Sub | `pip install -e ".[pubsub]"` | `SRE_QUEUE_BACKEND=pubsub SRE_PUBSUB_PROJECT=… SRE_PUBSUB_SUBSCRIPTION=…` | Datadog/Sentry → Cloud Function or Eventarc → topic; or publish from your own pipeline |
+| AWS SQS | `pip install -e ".[sqs]"` | `SRE_QUEUE_BACKEND=sqs SRE_SQS_QUEUE_URL=… SRE_SQS_REGION=…` | Datadog and Sentry both ship native SNS integrations → SNS → SQS (SNS envelopes are unwrapped) |
+| Redis Streams | `pip install -e ".[redis]"` | `SRE_QUEUE_BACKEND=redis SRE_REDIS_URL=… SRE_REDIS_STREAM=alerts` | `XADD alerts * source datadog payload '{…}'` |
+
+Message contract: body is the vendor JSON; a `source` attribute (`datadog` | `sentry` | `generic`, default `generic`) selects the adapter. Pub/Sub: message attribute. SQS: message attribute or SNS message attribute. Redis: stream field.
 
 ```bash
-sre-coworker serve --port 8000
-curl -X POST localhost:8000/webhooks/datadog -H 'content-type: application/json' \
-     -d @examples/datadog_webhook.json
+sre-coworker consume --backend redis                  # runs forever, human approval via REST
+sre-coworker consume --backend pubsub --auto-approve  # no gate: ticket + fix session on every alert
+
+# local demo
+docker run -d --rm -p 6379:6379 redis:7-alpine
+sre-coworker publish examples/alert_payments_5xx.json
+SRE_QUEUE_BACKEND=redis sre-coworker consume --max-messages 1
+```
+
+## Ingestion: signed webhook (optional)
+
+Disabled unless `SRE_WEBHOOK_SECRET` is set. Every request must carry `X-Signature-256: sha256=<hex HMAC-SHA256 of the raw body>` (constant-time compare). Use this only when a vendor cannot publish to a queue.
+
+```bash
+SRE_WEBHOOK_SECRET=s3cret sre-coworker serve --port 8000
+body=$(cat examples/datadog_webhook.json)
+sig=$(printf '%s' "$body" | openssl dgst -sha256 -hmac s3cret | awk '{print $2}')
+curl -X POST localhost:8000/webhooks/datadog -H "X-Signature-256: sha256=$sig" \
+     -H 'content-type: application/json' -d "$body"
 curl -X POST localhost:8000/incidents/<id>/approve -d '{"by":"maya"}' -H 'content-type: application/json'
 ```
+
+The approve/reject REST endpoints are still exposed by `serve`; put them behind your SSO proxy or replace with Slack buttons (roadmap).
 
 ## Going live
 
@@ -92,6 +120,7 @@ mypy sre_coworker tests
 ## Roadmap
 
 - Slack approval buttons instead of the REST gate
-- PagerDuty / Grafana adapters
+- PagerDuty / Grafana adapters; Kafka and Azure Service Bus queue backends
+- Dead-letter handling after N nacks
 - Poll the Devin session and post the PR link back to the Jira ticket
 - Learn from approve/reject decisions to tune scoring weights per service

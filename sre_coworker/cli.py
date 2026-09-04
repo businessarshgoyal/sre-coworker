@@ -96,6 +96,50 @@ def triage(
 
 
 @app.command()
+def consume(
+    backend: Annotated[
+        str | None, typer.Option(help="pubsub | sqs | redis (default: SRE_QUEUE_BACKEND)")
+    ] = None,
+    max_messages: Annotated[
+        int | None, typer.Option(help="Stop after N messages (default: run forever)")
+    ] = None,
+    auto_approve: Annotated[
+        bool, typer.Option("--auto-approve", help="Dispatch actions without a human gate")
+    ] = False,
+) -> None:
+    """Pull alerts from a queue. No inbound port is opened."""
+    import logging
+
+    from sre_coworker.consumer import consume as run_consumer
+    from sre_coworker.ingest import build_queue
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    cfg = settings.model_copy(update={"queue_backend": backend or settings.queue_backend})
+    if not cfg.queue_backend:
+        raise typer.BadParameter("set --backend or SRE_QUEUE_BACKEND")
+    queue_backend: str = cfg.queue_backend
+    if auto_approve:
+        cfg = cfg.model_copy(update={"auto_approve_min_confidence": 0.0})
+    queue = build_queue(queue_backend, **cfg.queue_kwargs())
+    console.print(f"[bold]consuming from {cfg.queue_backend}[/bold] (dry_run={cfg.dry_run})")
+    handled = asyncio.run(run_consumer(SRECoworker(cfg), queue, max_messages))
+    console.print(f"processed {handled} message(s)")
+
+
+@app.command()
+def publish(
+    alert_file: Annotated[Path, typer.Argument(help="JSON alert payload")],
+    source: Annotated[str, typer.Option(help="generic | datadog | sentry")] = "generic",
+) -> None:
+    """Publish a sample alert to the configured Redis stream (local testing helper)."""
+    import redis
+
+    r = redis.Redis.from_url(settings.redis_url)
+    msg_id = r.xadd(settings.redis_stream, {"source": source, "payload": alert_file.read_text()})
+    console.print(f"published {msg_id!r} to {settings.redis_stream}")
+
+
+@app.command()
 def serve(host: str = "0.0.0.0", port: int = 8000) -> None:
     """Run the webhook server."""
     import uvicorn
