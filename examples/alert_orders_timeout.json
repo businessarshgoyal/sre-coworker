@@ -1,0 +1,10 @@
+{
+  "source": "sentry",
+  "service": "orders-api",
+  "title": "orders-api export endpoint timeout",
+  "description": "Gateway timeout on GET /v1/orders/export for enterprise account",
+  "severity": "high",
+  "error_signature": "orders.export.timeout",
+  "fired_at": "2026-09-04T10:02:00Z",
+  "url": "https://sentry.io/organizations/acme/issues/999"
+}

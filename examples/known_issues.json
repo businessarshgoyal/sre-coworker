@@ -1,0 +1,25 @@
+[
+  {
+    "key": "ENG-702",
+    "summary": "orders-api export endpoint times out for accounts with >50k orders",
+    "status": "In Progress",
+    "url": "https://acme.atlassian.net/browse/ENG-702",
+    "error_signature": "orders.export.timeout",
+    "service": "orders-api"
+  },
+  {
+    "key": "ENG-655",
+    "summary": "users-api: connection pool exhausted during nightly sync",
+    "status": "To Do",
+    "url": "https://acme.atlassian.net/browse/ENG-655",
+    "error_signature": "pg.too_many_clients",
+    "service": "users-api"
+  },
+  {
+    "key": "ENG-600",
+    "summary": "payments-api 5xx on checkout after declined card",
+    "status": "Done",
+    "url": "https://acme.atlassian.net/browse/ENG-600",
+    "service": "payments-api"
+  }
+]

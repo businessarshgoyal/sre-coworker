@@ -1,0 +1,26 @@
+[
+  {
+    "sha": "8b21f3a9c0",
+    "message": "payments: simplify card retry loop, drop backoff",
+    "author": "maya",
+    "deployed_at": "2026-09-04T09:11:00Z",
+    "url": "https://github.com/acme/payments-api/commit/8b21f3a9c0",
+    "files": ["payments_api/charges/retry.py", "payments_api/config.py"]
+  },
+  {
+    "sha": "41ddc0e772",
+    "message": "docs: update README badges",
+    "author": "nisha",
+    "deployed_at": "2026-09-04T08:40:00Z",
+    "url": "https://github.com/acme/payments-api/commit/41ddc0e772",
+    "files": ["README.md"]
+  },
+  {
+    "sha": "c7a1e2b500",
+    "message": "orders: add bulk export endpoint",
+    "author": "arsh",
+    "deployed_at": "2026-09-04T06:30:00Z",
+    "url": "https://github.com/acme/orders-api/commit/c7a1e2b500",
+    "files": ["orders_api/export.py"]
+  }
+]

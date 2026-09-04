@@ -1,0 +1,9 @@
+{
+  "source": "datadog",
+  "service": "payments-api",
+  "title": "5xx spike on payments-api: checkout failing after declined card",
+  "description": "Error rate 6.2% on POST /v1/charges. Card retries looping with no timeout.",
+  "severity": "critical",
+  "fired_at": "2026-09-04T09:14:00Z",
+  "url": "https://app.datadoghq.com/monitors/12345"
+}

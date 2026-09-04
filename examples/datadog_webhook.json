@@ -1,0 +1,8 @@
+{
+  "title": "[Triggered] 5xx spike on payments-api checkout",
+  "body": "Error rate 6.2% on POST /v1/charges. Card retries looping with no timeout.",
+  "priority": "P1",
+  "date": 1788513240000,
+  "tags": "service:payments-api,env:prod,team:payments",
+  "link": "https://app.datadoghq.com/monitors/12345"
+}

@@ -1,0 +1,8 @@
+{
+  "source": "generic",
+  "service": "search-api",
+  "title": "search-api p99 latency > 3s",
+  "description": "Latency regression across all regions",
+  "severity": "medium",
+  "fired_at": "2026-09-04T14:00:00Z"
+}
