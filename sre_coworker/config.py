@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     deploy_window_minutes: int = 240
     weights_file: Path = Path("weights.yaml")
     cases_dir: Path = Path("tests/regression/cases")
+    memory_file: Path = Path("memory.json")
 
     github_repo: str | None = None  # owner/name
     github_token: str | None = None

@@ -11,7 +11,9 @@ from pydantic import BaseModel
 from sre_coworker.adapters import ADAPTERS
 from sre_coworker.config import settings
 from sre_coworker.coworker import SRECoworker
+from sre_coworker.memory import Memory
 from sre_coworker.models import Incident, Outcome
+from sre_coworker.trace import RunTrace
 
 app = FastAPI(title="SRE Coworker", version="0.1.0")
 coworker = SRECoworker(settings)
@@ -105,3 +107,39 @@ async def record_outcome(incident_id: str, outcome: Outcome) -> OutcomeRecorded:
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
     return OutcomeRecorded(incident=coworker.incidents[incident_id], case_file=str(path))
+
+
+@app.get("/incidents/{incident_id}/trace", response_model=RunTrace)
+async def get_trace(incident_id: str) -> RunTrace:
+    """Every tool call the dispatch made for this incident, in order, with outcome and latency."""
+    if incident_id not in coworker.traces:
+        raise HTTPException(404, "no trace: incident not found or not yet approved")
+    return coworker.traces[incident_id]
+
+
+@app.get("/memory", response_model=list[Memory])
+async def list_memory() -> list[Memory]:
+    return coworker.memory.items
+
+
+@app.post("/memory", response_model=Memory)
+async def add_memory(mem: Memory) -> Memory:
+    """Add a procedure/fact by hand (learned_from is left null to mark it as human-authored)."""
+    return coworker.memory.add(mem)
+
+
+@app.patch("/memory/{memory_id}", response_model=Memory)
+async def toggle_memory(memory_id: str, enabled: bool) -> Memory:
+    for m in coworker.memory.items:
+        if m.id == memory_id:
+            m.enabled = enabled
+            coworker.memory.save()
+            return m
+    raise HTTPException(404, "memory not found")
+
+
+@app.delete("/memory/{memory_id}")
+async def delete_memory(memory_id: str) -> dict[str, bool]:
+    if not coworker.memory.remove(memory_id):
+        raise HTTPException(404, "memory not found")
+    return {"ok": True}

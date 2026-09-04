@@ -13,9 +13,13 @@ from rich.table import Table
 from sre_coworker.adapters import ADAPTERS
 from sre_coworker.config import settings
 from sre_coworker.coworker import SRECoworker
-from sre_coworker.models import Incident
+from sre_coworker.memory import Guard, Memory, MemoryStore
+from sre_coworker.models import Incident, IncidentState
+from sre_coworker.trace import RunTrace
 
 app = typer.Typer(help="SRE coworker: triage an alert, review the brief, dispatch actions.")
+memory_app = typer.Typer(help="Inspect and curate procedural memory learned from past runs.")
+app.add_typer(memory_app, name="memory")
 console = Console()
 
 
@@ -68,6 +72,29 @@ def render(inc: Incident) -> None:
                 console.print(Panel(act.detail or "", title="Devin prompt (would be sent)"))
 
 
+def render_trace(trace: RunTrace, learned: list[Memory]) -> None:
+    t = Table(title=f"Tool-call trace {trace.run_id} · {trace.summary()}")
+    for col in ("#", "step", "try", "tool", "ok", "ms", "result / error"):
+        t.add_column(col)
+    for c in trace.calls:
+        t.add_row(
+            str(c.seq),
+            c.step or "",
+            str(c.attempt),
+            c.tool,
+            "[green]ok[/green]" if c.ok else f"[red]{c.error_code}[/red]",
+            f"{c.duration_ms:.0f}",
+            c.result_summary or c.error or "",
+        )
+    console.print(t)
+    if trace.memories_applied:
+        console.print(f"[bold]Memories applied:[/bold] {', '.join(trace.memories_applied)}")
+    if learned:
+        console.print("[bold]Learned from this run:[/bold]")
+        for m in learned:
+            console.print(f"  + {m.id} [{m.guard.value}] {m.text}")
+
+
 @app.command()
 def triage(
     alert_file: Annotated[Path, typer.Argument(help="JSON alert payload")],
@@ -81,18 +108,78 @@ def triage(
     payload = json.loads(alert_file.read_text())
     alert = ADAPTERS[source](payload)
 
-    async def run() -> Incident:
+    async def run() -> tuple[Incident, RunTrace | None, list[Memory]]:
         cw = SRECoworker(settings)
         inc = await cw.handle_alert(alert)
-        if approve:
+        if approve and inc.state != IncidentState.actions_dispatched:
             inc = await cw.approve(inc.id, approved_by="cli")
-        return inc
+        return inc, cw.traces.get(inc.id), cw.last_learned
 
-    inc = asyncio.run(run())
+    inc, trace, learned = asyncio.run(run())
     if as_json:
         console.print_json(inc.model_dump_json())
+        if trace:
+            console.print_json(trace.model_dump_json())
     else:
         render(inc)
+        if trace:
+            render_trace(trace, learned)
+
+
+@memory_app.command("list")
+def memory_list() -> None:
+    """Show every procedure/fact the coworker will consult on the next run."""
+    store = MemoryStore(settings.memory_file)
+    t = Table(title=f"Procedural memory ({settings.memory_file})")
+    for col in ("id", "kind", "guard", "on", "used", "learned from", "text"):
+        t.add_column(col)
+    for m in store.items:
+        t.add_row(
+            m.id,
+            m.kind,
+            m.guard.value,
+            "yes" if m.enabled else "[red]no[/red]",
+            str(m.times_applied),
+            m.learned_from or "human",
+            m.text,
+        )
+    console.print(t)
+
+
+@memory_app.command("add")
+def memory_add(
+    text: Annotated[str, typer.Argument(help="Human-readable procedure or fact")],
+    guard: Annotated[
+        Guard, typer.Option(help="Which executor behaviour it switches on")
+    ] = Guard.none,
+    param: Annotated[
+        list[str] | None, typer.Option("--param", "-p", help="key=value, repeatable")
+    ] = None,
+) -> None:
+    """Add a memory by hand (e.g. a known project quirk) before it is learned the hard way."""
+    params = dict(p.split("=", 1) for p in param or [])
+    store = MemoryStore(settings.memory_file)
+    m = store.add(Memory(text=text, guard=guard, params=params))
+    console.print(f"{m.id} [{m.guard.value}] {m.text}")
+
+
+@memory_app.command("remove")
+def memory_remove(memory_id: str) -> None:
+    store = MemoryStore(settings.memory_file)
+    if not store.remove(memory_id):
+        raise typer.Exit(1)
+
+
+@memory_app.command("disable")
+def memory_disable(memory_id: str, enable: bool = False) -> None:
+    """Keep a memory for the audit trail but stop applying it (or re-enable with --enable)."""
+    store = MemoryStore(settings.memory_file)
+    for m in store.items:
+        if m.id == memory_id:
+            m.enabled = enable
+            store.save()
+            return
+    raise typer.Exit(1)
 
 
 @app.command()

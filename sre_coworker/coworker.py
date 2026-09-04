@@ -7,15 +7,19 @@ from sre_coworker.connectors.deploys import DeploySource, FileDeploySource, GitH
 from sre_coworker.connectors.devin import DevinClient
 from sre_coworker.connectors.jira import JiraClient, load_known_issues
 from sre_coworker.connectors.runbooks import Runbook, load_runbooks
+from sre_coworker.executor import Executor
 from sre_coworker.feedback import write_case
+from sre_coworker.memory import Memory, MemoryStore
 from sre_coworker.models import (
-    ActionResult,
     Alert,
     Incident,
     IncidentState,
     KnownIssue,
     Outcome,
 )
+from sre_coworker.reflect import reflect_on_outcome, reflect_on_trace
+from sre_coworker.tools import DryRunTools, LiveTools, Tools
+from sre_coworker.trace import RunTrace
 from sre_coworker.triage import triage
 from sre_coworker.weights import Weights, load_weights
 
@@ -23,11 +27,19 @@ from sre_coworker.weights import Weights, load_weights
 class SRECoworker:
     """Owns the loop: alert -> brief -> (approval) -> ticket + fix session."""
 
-    def __init__(self, settings: Settings, deploy_source: DeploySource | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        deploy_source: DeploySource | None = None,
+        tools: Tools | None = None,
+    ) -> None:
         self.settings = settings
         self.runbooks: list[Runbook] = load_runbooks(settings.runbooks_dir)
         self.weights: Weights = load_weights(settings.weights_file)
+        self.memory = MemoryStore(settings.memory_file)
         self.incidents: dict[str, Incident] = {}
+        self.traces: dict[str, RunTrace] = {}
+        self.last_learned: list[Memory] = []
         self.deploy_source: DeploySource = deploy_source or self._default_deploy_source()
         self.jira: JiraClient | None = None
         if settings.jira_live:
@@ -42,6 +54,22 @@ class SRECoworker:
             DevinClient(settings.devin_api_key, settings.devin_api_base)
             if settings.devin_live and settings.devin_api_key
             else None
+        )
+        live = self.jira is not None or self.devin is not None
+        self.tools: Tools = tools or (
+            LiveTools(self.jira, self.devin)
+            if live
+            else DryRunTools(
+                project=settings.jira_project_key,
+                seed_issues=load_known_issues(settings.known_issues_file),
+            )
+        )
+        self.executor = Executor(
+            self.tools,
+            self.memory,
+            settings.jira_project_key,
+            settings.min_confidence_for_fix_session,
+            dry_run=not live,
         )
 
     def _default_deploy_source(self) -> DeploySource:
@@ -76,7 +104,10 @@ class SRECoworker:
             raise ValueError(f"incident {incident_id} is {inc.state}, cannot approve")
         inc.state = IncidentState.approved
         inc.approved_by = approved_by
-        inc.actions = await self._dispatch(inc)
+        inc.actions, trace = await self.executor.run(inc)
+        self.traces[inc.id] = trace
+        inc.run_id = trace.run_id
+        self.last_learned = reflect_on_trace(trace, self.memory, self.settings.jira_project_key)
         inc.state = IncidentState.actions_dispatched
         return inc
 
@@ -90,58 +121,7 @@ class SRECoworker:
         """Persist ground truth for a resolved incident as a regression case."""
         inc = self.incidents[incident_id]
         inc.outcome = outcome
+        self.last_learned = reflect_on_outcome(
+            inc, outcome, self.traces.get(incident_id), self.memory
+        )
         return write_case(inc, outcome, self.settings.cases_dir)
-
-    async def _dispatch(self, inc: Incident) -> list[ActionResult]:
-        results: list[ActionResult] = []
-        if inc.brief.is_duplicate:
-            dup = inc.brief.known_issues[0].issue
-            results.append(
-                ActionResult(
-                    kind="link_existing_ticket",
-                    ok=True,
-                    dry_run=True,
-                    ref=dup.key,
-                    url=dup.url,
-                    detail="duplicate of open issue; no new ticket or fix session",
-                )
-            )
-            return results
-
-        ticket = await self._create_ticket(inc)
-        results.append(ticket)
-        if inc.brief.confidence < self.settings.min_confidence_for_fix_session:
-            results.append(
-                ActionResult(
-                    kind="devin_session",
-                    ok=True,
-                    dry_run=True,
-                    ref=None,
-                    detail="skipped: confidence too low for an automated fix; human triage needed",
-                )
-            )
-            return results
-        results.append(await self._create_fix_session(inc, ticket.ref))
-        return results
-
-    async def _create_ticket(self, inc: Incident) -> ActionResult:
-        if self.jira:
-            return await self.jira.create(inc)
-        return ActionResult(
-            kind="jira_ticket",
-            ok=True,
-            dry_run=True,
-            ref=f"{self.settings.jira_project_key}-DRYRUN",
-            detail=f"[{inc.alert.service}] {inc.brief.headline}",
-        )
-
-    async def _create_fix_session(self, inc: Incident, ticket_ref: str | None) -> ActionResult:
-        if self.devin:
-            return await self.devin.create_fix_session(inc, ticket_ref)
-        return ActionResult(
-            kind="devin_session",
-            ok=True,
-            dry_run=True,
-            ref="session-DRYRUN",
-            detail=inc.brief.fix_prompt,
-        )

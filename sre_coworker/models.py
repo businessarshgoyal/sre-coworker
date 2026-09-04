@@ -137,3 +137,4 @@ class Incident(BaseModel):
     approved_by: str | None = None
     actions: list[ActionResult] = Field(default_factory=list)
     outcome: Outcome | None = None
+    run_id: str | None = None

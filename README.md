@@ -125,7 +125,46 @@ must conclude (top suspect deploy, duplicate detection, confidence band, runbook
 actions). When triage gets a real incident wrong, add a case reproducing it, then fix
 `triage.py` until `pytest tests/regression` passes.
 
-## Learning loop (how it improves per run)
+## Self-improvement: procedural memory over the execution trace
+
+Every approved incident is dispatched by `executor.py` as a sequence of tool calls
+(`jira.search_issues`, `jira.get_issue_types`, `jira.create_issue`, `devin.create_session`).
+Each call is recorded in a `RunTrace` — order, arguments, ok/error code, retryable or not,
+attempt, step, latency (`GET /incidents/{id}/trace`, or printed by `triage --approve`).
+After the run, `reflect.py` reads the trace and turns concrete waste into memories:
+
+| what the trace showed                                                    | memory learned (guard)     | what the next run does differently                                   |
+|--------------------------------------------------------------------------|----------------------------|-----------------------------------------------------------------------|
+| `create_issue` → `INVALID_ISSUE_TYPE`, then `get_issue_types` fixed it   | `resolve_issue_type` + fact "project ENG accepts Incident, Task" | uses a valid type on the first call; skips the discovery call entirely |
+| a step failed and the whole batch was rerun (second ticket created)      | `retry_failed_step_only`   | retries just the failed call; earlier side effects are not repeated  |
+| `devin.create_session` → `RATE_LIMITED`, later succeeded                 | `retry_with_backoff`       | exponential backoff on that error instead of failing the run          |
+| on-call recorded the outcome as `duplicate_of` a ticket this run created | `search_before_create`     | calls `jira.search_issues` first and links the open issue             |
+
+Memories live in `memory.json` (`SRE_MEMORY_FILE`), each tagged with the `run_id` that
+produced it and a `times_applied` counter, so every behaviour change is traceable to the
+evidence for it. They are data, not code: `sre-coworker memory list | add | disable | remove`
+(or `GET/POST/PATCH/DELETE /memory`) lets a human curate them, and a disabled memory stays
+in the file for the audit trail but is no longer consulted. Facts are also appended to the
+Devin prompt as standing knowledge.
+
+Try it — run 1 makes 4 calls with 1 failure, run 2 makes 2 calls with 0 failures:
+
+```bash
+rm -f memory.json
+sre-coworker triage examples/alert_payments_5xx.json --approve   # trace + "Learned from this run"
+sre-coworker triage examples/alert_payments_5xx.json --approve   # trace shows memories applied
+sre-coworker memory list
+```
+
+`tests/test_procedural_memory.py` pins the harder version (invalid type **and** a flaky
+Devin API): 8 calls / 3 failures / a duplicate ticket on run 1 → 3 calls / 1 transient
+failure / no duplicate on run 2, with nothing new left to learn.
+
+What this is not: it only learns patterns `reflect.py` can detect, and it does not touch
+triage conclusions. Those are handled by the two layers below, which are guardrails and
+ground truth rather than self-improvement.
+
+## Outcome feedback and weight tuning
 
 Triage is deterministic, but the numbers it reasons with live in `weights.yaml` and the
 ground truth lives in the case set. Each resolved incident feeds both:
@@ -159,3 +198,4 @@ coworker gets better with each incident without a model whose behaviour you can'
 - Dead-letter handling after N nacks
 - Poll the Devin session and post the PR link back to the Jira ticket
 - Learn from approve/reject decisions to tune scoring weights per service
+- More reflection detectors (redundant reads, timeouts, permission errors); LLM-assisted reflection with the trace as evidence
