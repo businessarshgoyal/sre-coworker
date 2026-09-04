@@ -3,9 +3,11 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from sre_coworker.adapters import ADAPTERS
@@ -17,6 +19,7 @@ from sre_coworker.trace import RunTrace
 
 app = FastAPI(title="SRE Coworker", version="0.1.0")
 coworker = SRECoworker(settings)
+STATIC = Path(__file__).parent / "static"
 
 
 class Decision(BaseModel):
@@ -143,3 +146,28 @@ async def delete_memory(memory_id: str) -> dict[str, bool]:
     if not coworker.memory.remove(memory_id):
         raise HTTPException(404, "memory not found")
     return {"ok": True}
+
+
+class ManualAlert(BaseModel):
+    source: str = "generic"
+    payload: dict[str, Any]
+
+
+@app.post("/incidents", response_model=Incident)
+async def create_incident(alert: ManualAlert) -> Incident:
+    """Manual/UI ingestion of one alert payload (same trust boundary as approve/reject)."""
+    adapter = ADAPTERS.get(alert.source)
+    if adapter is None:
+        raise HTTPException(404, f"unknown alert source '{alert.source}'")
+    return await coworker.handle_alert(adapter(alert.payload))
+
+
+@app.get("/examples")
+async def list_examples() -> dict[str, Any]:
+    files = sorted(Path("examples").glob("alert_*.json"))
+    return {p.stem: json.loads(p.read_text()) for p in files}
+
+
+@app.get("/", include_in_schema=False)
+async def ui() -> FileResponse:
+    return FileResponse(STATIC / "index.html")

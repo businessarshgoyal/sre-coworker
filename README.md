@@ -29,6 +29,10 @@ Guardrails:
 
 ## Quick start
 
+`sre-coworker serve` then open http://localhost:8000/ — a small web UI to submit an alert,
+read the brief, approve/reject, inspect the tool-call trace and curate procedural memory.
+Swagger is at `/docs`.
+
 ```bash
 uv venv --python 3.12 && uv pip install -e ".[dev]"
 

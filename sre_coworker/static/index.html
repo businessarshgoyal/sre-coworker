@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SRE Coworker</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --line:#262b36; --fg:#e6e8ee; --dim:#8b93a7; --ok:#3ecf8e; --bad:#ff6b6b; --warn:#f5c451; --acc:#6ea8fe; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:var(--fg); }
+  header { display:flex; align-items:center; gap:16px; padding:12px 20px; border-bottom:1px solid var(--line); }
+  header h1 { font-size:16px; margin:0; }
+  header .mode { color:var(--dim); font-size:12px; }
+  main { display:grid; grid-template-columns:320px 1fr 360px; gap:0; height:calc(100vh - 49px); }
+  section { overflow:auto; padding:16px; border-right:1px solid var(--line); }
+  section:last-child { border-right:0; }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); margin:0 0 10px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px; margin-bottom:10px; }
+  .inc { cursor:pointer; }
+  .inc:hover, .inc.sel { border-color:var(--acc); }
+  .inc .t { font-weight:600; }
+  .inc .m { color:var(--dim); font-size:12px; margin-top:4px; display:flex; gap:8px; }
+  .pill { display:inline-block; padding:1px 7px; border-radius:10px; font-size:11px; border:1px solid var(--line); color:var(--dim); }
+  .pill.awaiting_approval { color:var(--warn); border-color:var(--warn); }
+  .pill.actions_dispatched { color:var(--ok); border-color:var(--ok); }
+  .pill.rejected { color:var(--bad); border-color:var(--bad); }
+  .pill.dup { color:var(--acc); border-color:var(--acc); }
+  button { background:var(--acc); color:#08111f; border:0; border-radius:6px; padding:7px 12px; font-weight:600; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--fg); border:1px solid var(--line); }
+  button.danger { background:var(--bad); }
+  button:disabled { opacity:.45; cursor:default; }
+  select, textarea { width:100%; background:#0b0d12; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:8px; font-family:ui-monospace,Menlo,monospace; font-size:12px; }
+  textarea { height:140px; resize:vertical; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--dim); font-weight:500; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .dim { color:var(--dim); }
+  .mono { font-family:ui-monospace,Menlo,monospace; font-size:12px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .kv { display:grid; grid-template-columns:120px 1fr; gap:4px 10px; font-size:13px; }
+  .kv div:nth-child(odd) { color:var(--dim); }
+  .bar { height:6px; background:var(--line); border-radius:3px; overflow:hidden; }
+  .bar i { display:block; height:100%; background:var(--ok); }
+  ul { margin:6px 0; padding-left:18px; }
+  pre { white-space:pre-wrap; background:#0b0d12; padding:10px; border-radius:6px; border:1px solid var(--line); font-size:12px; margin:0; }
+  .mem .txt { margin:6px 0; }
+  .mem.off { opacity:.5; }
+  .empty { color:var(--dim); font-style:italic; }
+  .toast { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); background:var(--panel); border:1px solid var(--acc); padding:8px 14px; border-radius:8px; display:none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>SRE Coworker</h1>
+  <span class="mode" id="mode"></span>
+  <span style="flex:1"></span>
+  <a class="dim" href="/docs" target="_blank" style="font-size:12px">API docs</a>
+</header>
+<main>
+  <section>
+    <h2>New alert</h2>
+    <div class="card">
+      <div class="row" style="margin-bottom:8px">
+        <select id="example"></select>
+      </div>
+      <textarea id="payload" class="mono"></textarea>
+      <div class="row" style="margin-top:8px">
+        <select id="source" style="width:auto"><option>generic</option><option>datadog</option><option>sentry</option></select>
+        <button id="send">Triage</button>
+      </div>
+    </div>
+    <h2>Incidents</h2>
+    <div id="incidents"></div>
+  </section>
+
+  <section id="detail"><div class="empty">Select an incident, or triage a new alert.</div></section>
+
+  <section>
+    <h2>Procedural memory <span class="dim" id="memcount"></span></h2>
+    <div id="memory"></div>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let selected = null, examples = {};
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  if (!r.ok) { const t = await r.text(); throw new Error(`${r.status} ${t}`); }
+  return r.status === 204 ? null : r.json();
+}
+function toast(msg, ms = 2500) { const t = $('#toast'); t.textContent = msg; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', ms); }
+
+async function loadHealth() {
+  const h = await api('/health');
+  $('#mode').textContent = h.dry_run ? 'dry-run · no credentials needed' : `live · jira=${h.jira_live} devin=${h.devin_live}`;
+}
+async function loadExamples() {
+  examples = await api('/examples');
+  const sel = $('#example');
+  const keys = Object.keys(examples).sort((a, b) => (b.includes('payments') ? 1 : 0) - (a.includes('payments') ? 1 : 0));
+  sel.innerHTML = keys.map(k => `<option>${esc(k)}</option>`).join('');
+  sel.onchange = () => { $('#payload').value = JSON.stringify(examples[sel.value], null, 2); };
+  sel.onchange();
+}
+async function loadIncidents() {
+  const list = await api('/incidents');
+  list.reverse();
+  $('#incidents').innerHTML = list.length ? list.map(i => `
+    <div class="card inc ${selected === i.id ? 'sel' : ''}" onclick="select('${i.id}')">
+      <div class="t">${esc(i.brief.headline)}</div>
+      <div class="m"><span class="pill ${i.state}">${i.state.replace('_',' ')}</span>
+        ${i.brief.is_duplicate ? '<span class="pill dup">duplicate</span>' : ''}
+        <span>${Math.round(i.brief.confidence*100)}%</span><span class="mono">${i.id}</span></div>
+    </div>`).join('') : '<div class="empty">No incidents yet.</div>';
+}
+async function select(id) { selected = id; await loadIncidents(); await renderDetail(); }
+
+async function renderDetail() {
+  if (!selected) return;
+  const inc = await api(`/incidents/${selected}`);
+  let trace = null;
+  try { trace = await api(`/incidents/${selected}/trace`); } catch (_) {}
+  const b = inc.brief;
+  const canDecide = inc.state === 'awaiting_approval' || inc.state === 'triaged';
+  $('#detail').innerHTML = `
+    <div class="row" style="justify-content:space-between;margin-bottom:10px">
+      <h2 style="margin:0">Incident <span class="mono">${inc.id}</span> <span class="pill ${inc.state}">${inc.state.replace('_',' ')}</span></h2>
+      <div class="row">
+        <button id="approve" ${canDecide ? '' : 'disabled'}>Approve &amp; dispatch</button>
+        <button id="reject" class="ghost" ${canDecide ? '' : 'disabled'}>Reject</button>
+      </div>
+    </div>
+    <div class="card">
+      <div style="font-size:16px;font-weight:600">${esc(b.headline)}</div>
+      <div class="dim" style="margin:4px 0 10px">${esc(b.summary)}</div>
+      <div class="kv">
+        <div>Likely cause</div><div>${esc(b.likely_cause)}</div>
+        <div>Confidence</div><div><div class="bar" style="width:200px;display:inline-block;vertical-align:middle;margin-right:8px"><i style="width:${b.confidence*100}%"></i></div>${Math.round(b.confidence*100)}%</div>
+        <div>Alert</div><div>${esc(inc.alert.service)} · ${esc(inc.alert.severity)} · ${esc(inc.alert.source)}${inc.alert.error_signature ? ` · <span class="mono">${esc(inc.alert.error_signature)}</span>` : ''}</div>
+        ${inc.approved_by ? `<div>Approved by</div><div>${esc(inc.approved_by)}</div>` : ''}
+      </div>
+    </div>
+    ${b.suspect_deploys.length ? `<div class="card"><h2>Suspect deploys</h2><table><tr><th>sha</th><th>message</th><th>author</th><th>min before</th><th>score</th></tr>
+      ${b.suspect_deploys.map(d => `<tr><td class="mono">${esc(d.deploy.sha)}</td><td>${esc(d.deploy.message)}</td><td>${esc(d.deploy.author)}</td><td>${Math.round(d.minutes_before_alert)}</td><td>${d.score.toFixed(2)}</td></tr>`).join('')}</table></div>` : ''}
+    ${b.known_issues.length ? `<div class="card"><h2>Similar open tickets</h2><table><tr><th>key</th><th>summary</th><th>reason</th></tr>
+      ${b.known_issues.map(k => `<tr><td class="mono">${k.issue.url ? `<a href="${esc(k.issue.url)}" target="_blank">${esc(k.issue.key)}</a>` : esc(k.issue.key)}</td><td>${esc(k.issue.summary)}</td><td>${esc(k.reason)}</td></tr>`).join('')}</table></div>` : ''}
+    ${b.runbooks.length ? `<div class="card"><h2>Runbooks</h2>${b.runbooks.map(r => `<div><b>${esc(r.title)}</b> <span class="dim">(${r.score.toFixed(2)})</span><div class="dim mono">${esc(r.path)}</div></div>`).join('')}</div>` : ''}
+    <div class="card"><h2>Recommended actions</h2><ol style="margin:0;padding-left:18px">${b.recommended_actions.map(a => `<li>${esc(a)}</li>`).join('')}</ol></div>
+    <div class="card"><h2>Sources</h2><ul style="margin:0">${b.citations.map(c => `<li><b>${esc(c.label)}</b>: ${c.url ? `<a href="${esc(c.url)}" target="_blank">${esc(c.url)}</a>` : esc(c.excerpt||'')}</li>`).join('')}</ul></div>
+    ${inc.actions.length ? `<div class="card"><h2>Actions dispatched</h2><table><tr><th>kind</th><th>ok</th><th>ref</th><th>mode</th></tr>
+      ${inc.actions.map(a => `<tr><td>${esc(a.kind)}</td><td class="${a.ok?'ok':'bad'}">${a.ok?'ok':'failed'}</td><td class="mono">${a.url ? `<a href="${esc(a.url)}" target="_blank">${esc(a.ref)}</a>` : esc(a.ref||'')}</td><td class="dim">${a.dry_run?'dry-run':'live'}</td></tr>`).join('')}</table>
+      ${(inc.actions.find(a => a.kind==='devin_session' && a.detail && a.ref) || {}).detail ? `<details style="margin-top:8px"><summary class="dim">Devin prompt</summary><pre>${esc(inc.actions.find(a => a.kind==='devin_session').detail)}</pre></details>` : ''}</div>` : ''}
+    ${trace ? `<div class="card"><h2>Tool-call trace <span class="mono dim">${esc(trace.run_id)}</span></h2>
+      <div class="dim" style="margin-bottom:6px">${trace.calls.length} call(s) · <span class="${trace.calls.filter(c=>!c.ok).length?'bad':'ok'}">${trace.calls.filter(c=>!c.ok).length} failed</span> · ${trace.batch_restarts} batch restart(s) · ${trace.memories_applied.length} memories applied</div>
+      <table><tr><th>#</th><th>step</th><th>try</th><th>tool</th><th>result</th><th>ms</th></tr>
+      ${trace.calls.map(c => `<tr><td>${c.seq}</td><td>${esc(c.step||'')}</td><td>${c.attempt}</td><td class="mono">${esc(c.tool)}</td><td class="${c.ok?'ok':'bad'}">${c.ok ? esc(c.result_summary||'ok') : `<b>${esc(c.error_code)}</b> <span class="dim">${esc(c.error)}</span>`}</td><td class="dim">${c.duration_ms.toFixed(0)}</td></tr>`).join('')}</table>
+      ${trace.memories_applied.length ? `<div class="dim" style="margin-top:6px">Applied: <span class="mono">${trace.memories_applied.map(esc).join(', ')}</span></div>` : ''}</div>` : ''}
+    ${inc.state === 'actions_dispatched' && !inc.outcome ? `<div class="card"><h2>Record outcome</h2>
+      <div class="row"><input id="dup" class="mono" placeholder="duplicate_of (ticket key)" style="background:#0b0d12;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:7px">
+      <input id="culprit" class="mono" placeholder="culprit sha" style="background:#0b0d12;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:7px">
+      <button id="outcome" class="ghost">Save outcome</button></div>
+      <div class="dim" style="margin-top:6px">Ground truth becomes a regression case; a duplicate teaches "search before create".</div></div>` : ''}
+    ${inc.outcome ? `<div class="card"><h2>Outcome</h2><pre>${esc(JSON.stringify(inc.outcome, null, 2))}</pre></div>` : ''}
+  `;
+  const decide = async (path) => {
+    try { await api(`/incidents/${inc.id}/${path}`, { method: 'POST', body: JSON.stringify({ by: 'ui' }) }); toast(path === 'approve' ? 'Dispatched' : 'Rejected'); }
+    catch (e) { toast(e.message, 5000); }
+    await refresh();
+  };
+  $('#approve')?.addEventListener('click', () => decide('approve'));
+  $('#reject')?.addEventListener('click', () => decide('reject'));
+  $('#outcome')?.addEventListener('click', async () => {
+    const body = { recorded_by: 'ui' };
+    if ($('#dup').value) body.duplicate_of = $('#dup').value.trim();
+    if ($('#culprit').value) body.culprit_sha = $('#culprit').value.trim();
+    try { await api(`/incidents/${inc.id}/outcome`, { method: 'POST', body: JSON.stringify(body) }); toast('Outcome recorded'); }
+    catch (e) { toast(e.message, 5000); }
+    await refresh();
+  });
+}
+
+async function loadMemory() {
+  const mems = await api('/memory');
+  $('#memcount').textContent = mems.length ? `(${mems.filter(m => m.enabled).length} active / ${mems.length})` : '';
+  $('#memory').innerHTML = mems.length ? mems.map(m => `
+    <div class="card mem ${m.enabled ? '' : 'off'}">
+      <div class="row"><span class="pill">${esc(m.kind)}</span><span class="pill">${esc(m.guard)}</span><span class="dim" style="font-size:11px">used ${m.times_applied}×</span></div>
+      <div class="txt">${esc(m.text)}</div>
+      <div class="dim" style="font-size:11px">${esc(m.id)} · learned from <span class="mono">${esc(m.learned_from || 'human')}</span></div>
+      <div class="row" style="margin-top:8px">
+        <button class="ghost" onclick="toggleMem('${m.id}', ${!m.enabled})">${m.enabled ? 'Disable' : 'Enable'}</button>
+        <button class="ghost danger" onclick="removeMem('${m.id}')">Remove</button>
+      </div>
+    </div>`).join('') : '<div class="empty">Nothing learned yet. Approve an incident, then look at its trace.</div>';
+}
+async function toggleMem(id, enabled) { await api(`/memory/${id}?enabled=${enabled}`, { method: 'PATCH' }); await loadMemory(); }
+async function removeMem(id) { await api(`/memory/${id}`, { method: 'DELETE' }); await loadMemory(); }
+
+$('#send').onclick = async () => {
+  let payload;
+  try { payload = JSON.parse($('#payload').value); } catch (e) { return toast('Payload is not valid JSON', 4000); }
+  try {
+    const inc = await api('/incidents', { method: 'POST', body: JSON.stringify({ source: $('#source').value, payload }) });
+    selected = inc.id; toast('Triaged');
+  } catch (e) { toast(e.message, 5000); }
+  await refresh();
+};
+
+async function refresh() { await Promise.all([loadIncidents(), loadMemory()]); if (selected) await renderDetail(); }
+(async () => { await Promise.all([loadHealth(), loadExamples()]); await refresh(); })();
+</script>
+</body>
+</html>
