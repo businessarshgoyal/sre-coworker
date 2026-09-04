@@ -1,0 +1,10 @@
+name: when the only recent deploy is a revert, do not dispatch an automated fix
+alert:
+  service: payments-api
+  title: payments-api 5xx spike on checkout retry
+  fired_at: "2026-09-04T09:30:00Z"
+deploys:
+  - {sha: "aaaa111111", message: "Revert \"payments: simplify card retry loop\"", author: maya, deployed_at: "2026-09-04T09:25:00Z", files: [payments_api/charges/retry.py]}
+expect:
+  confidence_max: 0.5
+  fix_session: false

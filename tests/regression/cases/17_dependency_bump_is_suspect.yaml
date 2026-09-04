@@ -1,0 +1,10 @@
+name: a lockfile-only dependency bump is still a valid suspect
+alert:
+  service: payments-api
+  title: payments-api 5xx spike after startup
+  fired_at: "2026-09-04T09:14:00Z"
+deploys:
+  - {sha: "dddd444444", message: "chore(deps): bump stripe from 9.1 to 10.0 in payments-api", author: dependabot, deployed_at: "2026-09-04T09:05:00Z", files: [payments_api/poetry.lock]}
+expect:
+  top_deploy: "dddd444444"
+  confidence_min: 0.6

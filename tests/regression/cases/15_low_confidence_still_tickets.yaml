@@ -1,0 +1,10 @@
+name: low confidence opens a ticket for a human but never a fix session
+alert:
+  service: search-api
+  title: search-api error budget burn
+  fired_at: "2026-09-04T14:00:00Z"
+deploys: []
+expect:
+  confidence_max: 0.4
+  actions: [jira_ticket, devin_session]
+  fix_session: false

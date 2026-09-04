@@ -1,0 +1,9 @@
+name: similar wording on a different service is a hint, not a duplicate
+alert:
+  service: orders-api
+  title: "orders-api connection pool exhausted"
+  fired_at: "2026-09-04T03:00:00Z"
+known_issues:
+  - {key: ENG-655, summary: "users-api: connection pool exhausted during nightly sync", status: To Do, service: users-api}
+expect:
+  is_duplicate: false

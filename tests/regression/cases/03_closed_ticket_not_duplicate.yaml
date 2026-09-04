@@ -1,0 +1,14 @@
+name: a Done ticket with the same signature must not suppress a new incident
+alert:
+  service: payments-api
+  title: payments-api 5xx on checkout after declined card
+  error_signature: payments.checkout.5xx
+  fired_at: "2026-09-04T09:14:00Z"
+deploys:
+  - {sha: "8b21f3a9c0", message: "payments: simplify card retry loop, drop backoff", author: maya, deployed_at: "2026-09-04T09:11:00Z", files: [payments_api/charges/retry.py]}
+known_issues:
+  - {key: ENG-600, summary: "payments-api 5xx on checkout after declined card", status: Done, error_signature: payments.checkout.5xx, service: payments-api}
+expect:
+  is_duplicate: false
+  top_deploy: "8b21f3a9c0"
+  actions: [jira_ticket, devin_session]

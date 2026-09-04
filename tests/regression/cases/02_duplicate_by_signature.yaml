@@ -1,0 +1,14 @@
+name: identical error signature on an open ticket is a duplicate
+alert:
+  service: orders-api
+  title: orders export timeout
+  error_signature: orders.export.timeout
+  fired_at: "2026-09-04T10:02:00Z"
+deploys:
+  - {sha: "c7a1e2b500", message: "orders: add bulk export endpoint", author: arsh, deployed_at: "2026-09-04T06:30:00Z", files: [orders_api/export.py]}
+known_issues:
+  - {key: ENG-702, summary: "orders-api export endpoint times out for accounts with >50k orders", status: In Progress, error_signature: orders.export.timeout, service: orders-api}
+expect:
+  is_duplicate: true
+  duplicate_of: ENG-702
+  actions: [link_existing_ticket]

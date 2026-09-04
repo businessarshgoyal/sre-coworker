@@ -117,6 +117,14 @@ ruff check . && ruff format --check .
 mypy sre_coworker tests
 ```
 
+### Incident regression suite
+
+`tests/regression/cases/*.yaml` is a scenario matrix: each file fixes an alert (or raw
+Datadog/Sentry payload), recent deploys and open known issues, and asserts what the brief
+must conclude (top suspect deploy, duplicate detection, confidence band, runbook, dispatched
+actions). When triage gets a real incident wrong, add a case reproducing it, then fix
+`triage.py` until `pytest tests/regression` passes.
+
 ## Roadmap
 
 - Slack approval buttons instead of the REST gate

@@ -1,0 +1,11 @@
+name: monorepo path services/<name>/ counts as a service match even when the message is terse
+alert:
+  service: checkout
+  title: checkout 5xx spike
+  fired_at: "2026-09-04T09:14:00Z"
+deploys:
+  - {sha: "eeee555555", message: "fix typo", author: sam, deployed_at: "2026-09-04T09:10:00Z", files: [services/checkout/handlers/pay.go]}
+expect:
+  top_deploy: "eeee555555"
+  confidence_min: 0.6
+  fix_session: true

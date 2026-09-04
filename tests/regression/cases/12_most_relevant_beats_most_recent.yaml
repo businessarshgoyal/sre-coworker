@@ -1,0 +1,12 @@
+name: an older deploy touching the failing code path beats a newer unrelated one on the same service
+alert:
+  service: payments-api
+  title: "payments-api: refund webhook signature verification failing"
+  description: "HMAC mismatch on POST /v1/refunds/webhook"
+  fired_at: "2026-09-04T12:00:00Z"
+deploys:
+  - {sha: "bbbb222222", message: "payments: bump logging verbosity", author: nisha, deployed_at: "2026-09-04T11:50:00Z", files: [payments_api/logging.py]}
+  - {sha: "cccc333333", message: "payments: rotate refund webhook signing key", author: maya, deployed_at: "2026-09-04T11:00:00Z", files: [payments_api/refunds/webhook.py]}
+expect:
+  top_deploy: "cccc333333"
+  confidence_min: 0.6

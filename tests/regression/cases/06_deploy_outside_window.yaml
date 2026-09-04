@@ -1,0 +1,10 @@
+name: deploys older than the correlation window are not considered
+alert:
+  service: payments-api
+  title: payments-api 5xx spike on checkout retry
+  fired_at: "2026-09-04T18:00:00Z"
+deploys:
+  - {sha: "8b21f3a9c0", message: "payments: simplify card retry loop, drop backoff", author: maya, deployed_at: "2026-09-04T09:11:00Z", files: [payments_api/charges/retry.py]}
+expect:
+  top_deploy: null
+  confidence_max: 0.5

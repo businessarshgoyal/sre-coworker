@@ -1,0 +1,16 @@
+name: sentry fingerprint becomes the error signature and dedupes
+source: sentry
+raw:
+  project: orders-api
+  level: error
+  url: https://sentry.io/x/1
+  event:
+    title: TimeoutError in export_orders
+    culprit: orders_api.export.export_orders
+    fingerprint: [orders.export.timeout]
+    tags: [[service, orders-api]]
+known_issues:
+  - {key: ENG-702, summary: "orders export times out", status: In Progress, error_signature: orders.export.timeout, service: orders-api}
+expect:
+  is_duplicate: true
+  duplicate_of: ENG-702

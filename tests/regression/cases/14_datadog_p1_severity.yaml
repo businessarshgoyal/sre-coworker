@@ -1,0 +1,16 @@
+name: datadog P1 maps to critical and service comes from tags
+source: datadog
+raw:
+  title: "[Triggered] 5xx spike on payments-api checkout"
+  body: "Card retries looping with no timeout."
+  priority: P1
+  date: 1788513240000
+  tags: "service:payments-api,env:prod"
+  link: https://app.datadoghq.com/monitors/1
+deploys:
+  - {sha: "8b21f3a9c0", message: "payments: simplify card retry loop, drop backoff", author: maya, deployed_at: "2026-09-04T09:11:00Z", files: [payments_api/charges/retry.py]}
+expect:
+  severity: critical
+  service: payments-api
+  top_deploy: "8b21f3a9c0"
+  citation_labels: ["datadog alert", "deploy 8b21f3a9c0"]

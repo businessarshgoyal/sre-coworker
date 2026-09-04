@@ -1,0 +1,12 @@
+name: a recent deploy on a different service does not give high confidence
+alert:
+  service: search-api
+  title: search-api p99 latency > 3s
+  description: latency regression across all regions
+  fired_at: "2026-09-04T09:14:00Z"
+deploys:
+  - {sha: "8b21f3a9c0", message: "payments: simplify card retry loop, drop backoff", author: maya, deployed_at: "2026-09-04T09:11:00Z", files: [payments_api/charges/retry.py]}
+expect:
+  confidence_max: 0.49
+  fix_session: false
+  actions: [jira_ticket, devin_session]

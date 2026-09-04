@@ -1,0 +1,11 @@
+name: a deploy that happened after the alert cannot be the cause
+alert:
+  service: payments-api
+  title: payments-api 5xx spike on checkout
+  fired_at: "2026-09-04T09:14:00Z"
+deploys:
+  - {sha: "ffff000001", message: "payments: hotfix checkout 5xx", author: maya, deployed_at: "2026-09-04T09:20:00Z", files: [payments_api/charges/retry.py]}
+expect:
+  top_deploy: null
+  confidence_max: 0.5
+  fix_session: false

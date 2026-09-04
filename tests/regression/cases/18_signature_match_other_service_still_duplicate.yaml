@@ -1,0 +1,11 @@
+name: an identical error signature dedupes even if the ticket is filed under another service
+alert:
+  service: checkout-web
+  title: TimeoutError calling orders export
+  error_signature: orders.export.timeout
+  fired_at: "2026-09-04T10:02:00Z"
+known_issues:
+  - {key: ENG-702, summary: "orders-api export endpoint times out", status: In Progress, error_signature: orders.export.timeout, service: orders-api}
+expect:
+  is_duplicate: true
+  duplicate_of: ENG-702

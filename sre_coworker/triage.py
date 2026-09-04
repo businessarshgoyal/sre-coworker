@@ -57,6 +57,18 @@ _STOP = {
 }
 
 
+_NON_CODE = re.compile(r"(^|/)(readme|changelog|license|contributing)|\.(md|rst|txt|adoc)$", re.I)
+_REVERT = re.compile(r"^\s*revert\b", re.I)
+
+
+def is_docs_only(deploy: Deploy) -> bool:
+    return bool(deploy.files) and all(_NON_CODE.search(f) for f in deploy.files)
+
+
+def is_revert(deploy: Deploy) -> bool:
+    return bool(_REVERT.match(deploy.message))
+
+
 def tokens(text: str) -> set[str]:
     words = re.findall(r"[a-z][a-z0-9_\-]{2,}", text.lower())
     return {w for w in words if w not in _STOP}
@@ -66,7 +78,7 @@ def correlate_deploys(alert: Alert, deploys: list[Deploy]) -> list[DeployCorrela
     alert_terms = tokens(f"{alert.title} {alert.description} {alert.service}")
     out: list[DeployCorrelation] = []
     for d in deploys:
-        if d.deployed_at > alert.fired_at:
+        if d.deployed_at > alert.fired_at or is_docs_only(d):
             continue
         minutes = (alert.fired_at - d.deployed_at) / timedelta(minutes=1)
         deploy_terms = tokens(d.message + " " + " ".join(d.files))
@@ -81,6 +93,8 @@ def correlate_deploys(alert: Alert, deploys: list[Deploy]) -> list[DeployCorrela
             score += 0.15
         elif not hits:
             score *= 0.5
+        if is_revert(d):
+            score *= 0.4  # reverts are remediation attempts, rarely the culprit
         if score > 0.2:
             out.append(
                 DeployCorrelation(
@@ -203,6 +217,15 @@ async def triage(
         confidence = 0.9
         actions.append(f"Link alert to {k} instead of opening a new ticket")
         actions.append("Ping the owner of the existing ticket; do not page on-call")
+    elif corr and is_revert(corr[0].deploy):
+        top = corr[0]
+        likely = (
+            f'Only recent change is a revert ({top.deploy.sha}, "{top.deploy.message}"); '
+            "the incident may predate it or the revert may be incomplete"
+        )
+        confidence = 0.4
+        actions.append("Confirm whether the revert fully rolled back; do not auto-dispatch a fix")
+        actions.append("Page on-call: incident persists after a rollback attempt")
     elif corr:
         top = corr[0]
         likely = (

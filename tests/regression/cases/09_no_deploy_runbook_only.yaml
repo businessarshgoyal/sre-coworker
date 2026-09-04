@@ -1,0 +1,12 @@
+name: with no deploys the runbook still drives the recommended actions and on-call is paged
+alert:
+  service: users-api
+  title: "users-api: FATAL too many clients already"
+  description: postgres connection pool exhausted
+  fired_at: "2026-09-04T03:00:00Z"
+deploys: []
+expect:
+  top_deploy: null
+  runbook: db-connection-pool
+  action_contains: ["Page on-call", "SHOW POOLS"]
+  fix_session: false

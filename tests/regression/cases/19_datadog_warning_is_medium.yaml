@@ -1,0 +1,9 @@
+name: datadog warning maps to medium severity and falls back to now when no date is given
+source: datadog
+raw:
+  title: "[Warn] payments-api latency elevated"
+  alert_type: warning
+  tags: "service:payments-api"
+expect:
+  severity: medium
+  service: payments-api

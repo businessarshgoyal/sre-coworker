@@ -1,0 +1,15 @@
+name: recent related deploy on same service is blamed
+alert:
+  service: payments-api
+  title: "5xx spike on payments-api: checkout failing after declined card"
+  description: "Card retries looping with no timeout on POST /v1/charges"
+  fired_at: "2026-09-04T09:14:00Z"
+deploys:
+  - {sha: "8b21f3a9c0", message: "payments: simplify card retry loop, drop backoff", author: maya, deployed_at: "2026-09-04T09:11:00Z", files: [payments_api/charges/retry.py]}
+  - {sha: "41ddc0e772", message: "docs: update README badges", author: nisha, deployed_at: "2026-09-04T08:40:00Z", files: [README.md]}
+expect:
+  top_deploy: "8b21f3a9c0"
+  is_duplicate: false
+  confidence_min: 0.7
+  runbook: payments-5xx
+  fix_session: true

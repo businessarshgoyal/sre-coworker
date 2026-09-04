@@ -1,0 +1,12 @@
+name: a docs-only deploy is never the top suspect when a code deploy exists
+alert:
+  service: payments-api
+  title: payments-api 5xx spike on checkout
+  description: retries looping
+  fired_at: "2026-09-04T09:14:00Z"
+deploys:
+  - {sha: "41ddc0e772", message: "docs: update README badges", author: nisha, deployed_at: "2026-09-04T09:12:00Z", files: [README.md, docs/index.md]}
+  - {sha: "8b21f3a9c0", message: "payments: simplify card retry loop, drop backoff", author: maya, deployed_at: "2026-09-04T08:30:00Z", files: [payments_api/charges/retry.py]}
+expect:
+  top_deploy: "8b21f3a9c0"
+  not_suspect: ["41ddc0e772"]

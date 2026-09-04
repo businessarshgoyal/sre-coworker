@@ -1,0 +1,10 @@
+name: a revert commit is a fix attempt, not a culprit
+alert:
+  service: payments-api
+  title: payments-api 5xx spike on checkout retry
+  fired_at: "2026-09-04T09:30:00Z"
+deploys:
+  - {sha: "aaaa111111", message: "Revert \"payments: simplify card retry loop, drop backoff\"", author: maya, deployed_at: "2026-09-04T09:25:00Z", files: [payments_api/charges/retry.py]}
+  - {sha: "8b21f3a9c0", message: "payments: simplify card retry loop, drop backoff", author: maya, deployed_at: "2026-09-04T09:11:00Z", files: [payments_api/charges/retry.py]}
+expect:
+  top_deploy: "8b21f3a9c0"

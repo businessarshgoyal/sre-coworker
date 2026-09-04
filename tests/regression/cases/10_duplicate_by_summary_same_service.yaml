@@ -1,0 +1,10 @@
+name: strong summary overlap on the same service dedupes without a signature
+alert:
+  service: users-api
+  title: "users-api connection pool exhausted during nightly sync"
+  fired_at: "2026-09-04T03:00:00Z"
+known_issues:
+  - {key: ENG-655, summary: "users-api: connection pool exhausted during nightly sync", status: To Do, service: users-api}
+expect:
+  is_duplicate: true
+  duplicate_of: ENG-655
