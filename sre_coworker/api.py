@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from sre_coworker.adapters import ADAPTERS
 from sre_coworker.config import settings
 from sre_coworker.coworker import SRECoworker
-from sre_coworker.models import Incident
+from sre_coworker.models import Incident, Outcome
 
 app = FastAPI(title="SRE Coworker", version="0.1.0")
 coworker = SRECoworker(settings)
@@ -88,3 +88,20 @@ async def reject(incident_id: str, decision: Decision) -> Incident:
     if incident_id not in coworker.incidents:
         raise HTTPException(404, "incident not found")
     return coworker.reject(incident_id, decision.by)
+
+
+class OutcomeRecorded(BaseModel):
+    incident: Incident
+    case_file: str
+
+
+@app.post("/incidents/{incident_id}/outcome", response_model=OutcomeRecorded)
+async def record_outcome(incident_id: str, outcome: Outcome) -> OutcomeRecorded:
+    """Record what actually happened; becomes a regression case the triage rules must satisfy."""
+    if incident_id not in coworker.incidents:
+        raise HTTPException(404, "incident not found")
+    try:
+        path = coworker.record_outcome(incident_id, outcome)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+    return OutcomeRecorded(incident=coworker.incidents[incident_id], case_file=str(path))

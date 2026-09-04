@@ -93,6 +93,9 @@ class Brief(BaseModel):
     fix_prompt: str
     citations: list[Citation] = Field(default_factory=list)
     is_duplicate: bool = False
+    # raw inputs, retained so an outcome can be replayed as a regression case
+    deploys_considered: list[Deploy] = Field(default_factory=list, exclude=True)
+    known_issues_considered: list[KnownIssue] = Field(default_factory=list, exclude=True)
 
 
 class IncidentState(StrEnum):
@@ -112,6 +115,19 @@ class ActionResult(BaseModel):
     detail: str | None = None
 
 
+class Outcome(BaseModel):
+    """What actually happened, recorded by a human after the incident is resolved."""
+
+    culprit_sha: str | None = None
+    innocent_shas: list[str] = Field(default_factory=list)
+    duplicate_of: str | None = None
+    not_duplicate: bool = False
+    runbook: str | None = None
+    needed_fix_session: bool | None = None
+    notes: str = ""
+    recorded_by: str = "unknown"
+
+
 class Incident(BaseModel):
     id: str = Field(default_factory=lambda: f"inc_{uuid4().hex[:10]}")
     alert: Alert
@@ -120,3 +136,4 @@ class Incident(BaseModel):
     created_at: datetime = Field(default_factory=_now)
     approved_by: str | None = None
     actions: list[ActionResult] = Field(default_factory=list)
+    outcome: Outcome | None = None

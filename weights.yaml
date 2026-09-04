@@ -1,0 +1,81 @@
+recency_weight: 0.326
+keyword_weight: 0.4
+keyword_saturation: 3
+service_bonus: 0.15
+unrelated_penalty: 0.5
+revert_penalty: 0.4
+suspect_threshold: 0.2
+deploy_confidence_base: 0.566
+deploy_confidence_slope: 0.44
+unrelated_confidence: 0.4
+revert_confidence: 0.4
+no_match_confidence: 0.3
+runbook_service_weight: 0.5
+runbook_keyword_weight: 0.2
+runbook_threshold: 0.3
+dupe_overlap_weight: 0.25
+dupe_same_service_weight: 0.3
+dupe_threshold: 0.55
+dupe_confidence: 0.9
+stop_words:
+- the
+- a
+- an
+- and
+- or
+- of
+- to
+- in
+- 'on'
+- for
+- is
+- are
+- with
+- after
+- before
+- from
+- by
+- at
+- be
+- this
+- that
+- it
+- as
+- error
+- errors
+- failing
+- failed
+- failure
+- spike
+- high
+- rate
+- alert
+synonyms:
+  5xx:
+  - '500'
+  - '502'
+  - '503'
+  - '504'
+  - server-error
+  timeout:
+  - timeouts
+  - timed-out
+  - deadline
+  - slow
+  - latency
+  retry:
+  - retries
+  - retrying
+  - backoff
+  db:
+  - database
+  - postgres
+  - mysql
+  - sql
+  pool:
+  - connection-pool
+  - connections
+  oom:
+  - memory
+  - out-of-memory
+  - oomkilled

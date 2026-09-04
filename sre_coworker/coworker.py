@@ -7,8 +7,17 @@ from sre_coworker.connectors.deploys import DeploySource, FileDeploySource, GitH
 from sre_coworker.connectors.devin import DevinClient
 from sre_coworker.connectors.jira import JiraClient, load_known_issues
 from sre_coworker.connectors.runbooks import Runbook, load_runbooks
-from sre_coworker.models import ActionResult, Alert, Incident, IncidentState, KnownIssue
+from sre_coworker.feedback import write_case
+from sre_coworker.models import (
+    ActionResult,
+    Alert,
+    Incident,
+    IncidentState,
+    KnownIssue,
+    Outcome,
+)
 from sre_coworker.triage import triage
+from sre_coworker.weights import Weights, load_weights
 
 
 class SRECoworker:
@@ -17,6 +26,7 @@ class SRECoworker:
     def __init__(self, settings: Settings, deploy_source: DeploySource | None = None) -> None:
         self.settings = settings
         self.runbooks: list[Runbook] = load_runbooks(settings.runbooks_dir)
+        self.weights: Weights = load_weights(settings.weights_file)
         self.incidents: dict[str, Incident] = {}
         self.deploy_source: DeploySource = deploy_source or self._default_deploy_source()
         self.jira: JiraClient | None = None
@@ -52,6 +62,7 @@ class SRECoworker:
             await self._known_issues(alert.service),
             window_minutes=self.settings.deploy_window_minutes,
             repo=self.settings.github_repo,
+            weights=self.weights,
         )
         incident = Incident(alert=alert, brief=brief, state=IncidentState.awaiting_approval)
         self.incidents[incident.id] = incident
@@ -74,6 +85,12 @@ class SRECoworker:
         inc.state = IncidentState.rejected
         inc.approved_by = rejected_by
         return inc
+
+    def record_outcome(self, incident_id: str, outcome: Outcome) -> Path:
+        """Persist ground truth for a resolved incident as a regression case."""
+        inc = self.incidents[incident_id]
+        inc.outcome = outcome
+        return write_case(inc, outcome, self.settings.cases_dir)
 
     async def _dispatch(self, inc: Incident) -> list[ActionResult]:
         results: list[ActionResult] = []

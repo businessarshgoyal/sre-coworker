@@ -1,108 +1,28 @@
 """Scenario regression suite: one YAML per incident shape under tests/regression/cases.
 
 Each case fixes the alert, deploys and known issues, then asserts on the brief and the
-actions the coworker dispatches. Add a case whenever triage gets an incident wrong.
+actions the coworker dispatches. Cases are added by hand when triage gets an incident wrong,
+and automatically by `record_outcome` after a real incident is resolved.
 """
 
 from __future__ import annotations
 
-import json
-from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 import pytest
 import yaml
 
-from sre_coworker.adapters import ADAPTERS
-from sre_coworker.config import Settings
-from sre_coworker.coworker import SRECoworker
-from sre_coworker.models import Alert, Deploy, Incident, KnownIssue
+from sre_coworker.cases import evaluate, run_case
+from sre_coworker.weights import load_weights
 
 ROOT = Path(__file__).resolve().parents[2]
 CASES = sorted((Path(__file__).parent / "cases").glob("*.yaml"))
-
-
-class StaticDeploys:
-    def __init__(self, deploys: list[Deploy]) -> None:
-        self.deploys = deploys
-
-    async def recent(self, since: datetime) -> list[Deploy]:
-        return [d for d in self.deploys if d.deployed_at >= since]
-
-
-def load_alert(case: dict[str, Any]) -> Alert:
-    if "raw" in case:
-        return ADAPTERS[case.get("source", "generic")](case["raw"])
-    return Alert.model_validate(case["alert"])
-
-
-async def run_case(case: dict[str, Any], tmp_path: Path) -> Incident:
-    known = [KnownIssue.model_validate(k) for k in case.get("known_issues", [])]
-    issues_file = tmp_path / "known_issues.json"
-    issues_file.write_text(json.dumps([k.model_dump(mode="json") for k in known]))
-    settings = Settings(runbooks_dir=ROOT / "runbooks", known_issues_file=issues_file)
-    cw = SRECoworker(
-        settings, StaticDeploys([Deploy.model_validate(d) for d in case.get("deploys", [])])
-    )
-    inc = await cw.handle_alert(load_alert(case))
-    return await cw.approve(inc.id, "regression")
+WEIGHTS = load_weights(ROOT / "weights.yaml")
 
 
 @pytest.mark.parametrize("path", CASES, ids=[p.stem for p in CASES])
 async def test_case(path: Path, tmp_path: Path) -> None:
     case = yaml.safe_load(path.read_text())
-    inc = await run_case(case, tmp_path)
-    b, e = inc.brief, case["expect"]
-    failures: list[str] = []
-
-    def check(cond: bool, msg: str) -> None:
-        if not cond:
-            failures.append(msg)
-
-    if "top_deploy" in e:
-        top = b.suspect_deploys[0].deploy.sha if b.suspect_deploys else None
-        check(top == e["top_deploy"], f"top_deploy={top!r} expected {e['top_deploy']!r}")
-    for sha in e.get("not_suspect", []):
-        check(all(d.deploy.sha != sha for d in b.suspect_deploys), f"{sha} should not be a suspect")
-    if "is_duplicate" in e:
-        check(b.is_duplicate == e["is_duplicate"], f"is_duplicate={b.is_duplicate}")
-    if "duplicate_of" in e:
-        key = b.known_issues[0].issue.key if b.known_issues else None
-        check(key == e["duplicate_of"], f"duplicate_of={key!r} expected {e['duplicate_of']!r}")
-    if "confidence_min" in e:
-        check(
-            b.confidence >= e["confidence_min"],
-            f"confidence {b.confidence} < {e['confidence_min']}",
-        )
-    if "confidence_max" in e:
-        check(
-            b.confidence <= e["confidence_max"],
-            f"confidence {b.confidence} > {e['confidence_max']}",
-        )
-    if "runbook" in e:
-        slugs = [r.slug for r in b.runbooks]
-        check(
-            bool(slugs) and slugs[0] == e["runbook"],
-            f"runbooks={slugs} expected {e['runbook']} first",
-        )
-    if "actions" in e:
-        kinds = [a.kind for a in inc.actions]
-        check(kinds == e["actions"], f"actions={kinds} expected {e['actions']}")
-    if "fix_session" in e:
-        sess = next((a for a in inc.actions if a.kind == "devin_session"), None)
-        dispatched = sess is not None and sess.ref is not None
-        check(dispatched == e["fix_session"], f"fix_session dispatched={dispatched}")
-    for needle in e.get("action_contains", []):
-        check(
-            any(needle in a for a in b.recommended_actions),
-            f"no recommended action contains {needle!r}",
-        )
-    if "severity" in e:
-        check(inc.alert.severity.value == e["severity"], f"severity={inc.alert.severity.value}")
-    if "service" in e:
-        check(inc.alert.service == e["service"], f"service={inc.alert.service}")
-    for label in e.get("citation_labels", []):
-        check(any(c.label == label for c in b.citations), f"missing citation {label!r}")
-
+    inc = await run_case(case, tmp_path, ROOT / "runbooks", WEIGHTS)
+    failures = evaluate(inc, case["expect"])
     assert not failures, f"{case['name']}:\n  - " + "\n  - ".join(failures)

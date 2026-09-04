@@ -140,6 +140,54 @@ def publish(
 
 
 @app.command()
+def tune(
+    iterations: Annotated[int, typer.Option(help="Hill-climb steps")] = 200,
+    seed: Annotated[int, typer.Option()] = 0,
+    write: Annotated[
+        bool, typer.Option("--write", help="Overwrite weights file with the best result")
+    ] = False,
+) -> None:
+    """Re-fit triage weights against tests/regression/cases and report what changed."""
+    import tempfile
+
+    from sre_coworker.tune import tune as run_tune
+    from sre_coworker.weights import load_weights, save_weights
+
+    start = load_weights(settings.weights_file)
+    with tempfile.TemporaryDirectory() as tmp:
+        res = asyncio.run(
+            run_tune(
+                start,
+                settings.cases_dir,
+                settings.runbooks_dir,
+                Path(tmp),
+                iterations=iterations,
+                seed=seed,
+            )
+        )
+    console.print(
+        f"[bold]cases passing:[/bold] {res.before}/{res.total} -> {res.after}/{res.total}"
+    )
+    if res.changed:
+        t = Table(title="Weight changes")
+        t.add_column("weight")
+        t.add_column("before")
+        t.add_column("after")
+        for k, (a, b) in res.changed.items():
+            t.add_row(k, f"{a:.3f}", f"{b:.3f}")
+        console.print(t)
+    else:
+        console.print("no weight change improves the case set")
+    for stem, fails in res.still_failing.items():
+        console.print(f"[red]still failing[/red] {stem}: {'; '.join(fails)}")
+    if write and res.changed:
+        save_weights(res.weights, settings.weights_file)
+        console.print(f"wrote {settings.weights_file}")
+    if res.after < res.total:
+        raise typer.Exit(code=1)
+
+
+@app.command()
 def serve(host: str = "0.0.0.0", port: int = 8000) -> None:
     """Run the webhook server."""
     import uvicorn

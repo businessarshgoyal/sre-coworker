@@ -125,6 +125,33 @@ must conclude (top suspect deploy, duplicate detection, confidence band, runbook
 actions). When triage gets a real incident wrong, add a case reproducing it, then fix
 `triage.py` until `pytest tests/regression` passes.
 
+## Learning loop (how it improves per run)
+
+Triage is deterministic, but the numbers it reasons with live in `weights.yaml` and the
+ground truth lives in the case set. Each resolved incident feeds both:
+
+1. **Record the outcome** once the incident is closed — what the culprit actually was,
+   which suspect was innocent, whether it was a duplicate, whether a fix session was needed:
+   ```bash
+   curl -X POST localhost:8000/incidents/<id>/outcome \
+     -d '{"culprit_sha":"8b21f3a9c0","innocent_shas":["41ddc0e772"],"recorded_by":"oncall"}'
+   ```
+   This writes `tests/regression/cases/learned_<ts>_<service>_<id>.yaml` with the exact
+   alert, deploys and open tickets that were seen, plus the asserted outcome. From then on
+   `pytest` fails if triage ever gets that incident shape wrong again.
+2. **Re-fit the weights** against the whole case set:
+   ```bash
+   sre-coworker tune            # report: cases passing before -> after, which weights moved
+   sre-coworker tune --write    # persist the best weights.yaml
+   ```
+   `tune` hill-climbs the numeric weights (recency vs. keyword overlap, service bonus,
+   dedupe threshold, ...) maximising passing cases, tie-broken by staying closest to the
+   current weights, so nothing drifts without a case to justify it. Exit code 1 if any case
+   still fails — that means the rule *structure* needs a code change, not just a number.
+
+Every change is a reviewable diff (a YAML case + a weights delta), which is the point: the
+coworker gets better with each incident without a model whose behaviour you can't audit.
+
 ## Roadmap
 
 - Slack approval buttons instead of the REST gate

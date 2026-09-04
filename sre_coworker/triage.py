@@ -20,42 +20,9 @@ from sre_coworker.models import (
     KnownIssueMatch,
     RunbookMatch,
 )
+from sre_coworker.weights import Weights
 
-_STOP = {
-    "the",
-    "a",
-    "an",
-    "and",
-    "or",
-    "of",
-    "to",
-    "in",
-    "on",
-    "for",
-    "is",
-    "are",
-    "with",
-    "after",
-    "before",
-    "from",
-    "by",
-    "at",
-    "be",
-    "this",
-    "that",
-    "it",
-    "as",
-    "error",
-    "errors",
-    "failing",
-    "failed",
-    "failure",
-    "spike",
-    "high",
-    "rate",
-    "alert",
-}
-
+DEFAULT_WEIGHTS = Weights()
 
 _NON_CODE = re.compile(r"(^|/)(readme|changelog|license|contributing)|\.(md|rst|txt|adoc)$", re.I)
 _REVERT = re.compile(r"^\s*revert\b", re.I)
@@ -69,33 +36,37 @@ def is_revert(deploy: Deploy) -> bool:
     return bool(_REVERT.match(deploy.message))
 
 
-def tokens(text: str) -> set[str]:
-    words = re.findall(r"[a-z][a-z0-9_\-]{2,}", text.lower())
-    return {w for w in words if w not in _STOP}
+def tokens(text: str, w: Weights = DEFAULT_WEIGHTS) -> set[str]:
+    words = re.findall(r"[a-z0-9][a-z0-9_\-]{1,}", text.lower())
+    stop, canon = w.stop_set(), w.canonical()
+    return {canon.get(x, x) for x in words if x not in stop and len(x) >= 3}
 
 
-def correlate_deploys(alert: Alert, deploys: list[Deploy]) -> list[DeployCorrelation]:
-    alert_terms = tokens(f"{alert.title} {alert.description} {alert.service}")
+def correlate_deploys(
+    alert: Alert, deploys: list[Deploy], w: Weights = DEFAULT_WEIGHTS
+) -> list[DeployCorrelation]:
+    alert_terms = tokens(f"{alert.title} {alert.description} {alert.service}", w)
     out: list[DeployCorrelation] = []
     for d in deploys:
         if d.deployed_at > alert.fired_at or is_docs_only(d):
             continue
         minutes = (alert.fired_at - d.deployed_at) / timedelta(minutes=1)
-        deploy_terms = tokens(d.message + " " + " ".join(d.files))
+        deploy_terms = tokens(d.message + " " + " ".join(d.files), w)
         hits = sorted(alert_terms & deploy_terms)
-        # recency dominates; each keyword hit adds weight
         recency = max(0.0, 1.0 - minutes / 240.0)
-        score = 0.6 * recency + 0.4 * min(1.0, len(hits) / 3)
+        score = w.recency_weight * recency + w.keyword_weight * min(
+            1.0, len(hits) / w.keyword_saturation
+        )
         service_match = alert.service.lower() in deploy_terms or any(
             alert.service.split("-")[0] in f for f in d.files
         )
         if service_match:
-            score += 0.15
+            score += w.service_bonus
         elif not hits:
-            score *= 0.5
+            score *= w.unrelated_penalty
         if is_revert(d):
-            score *= 0.4  # reverts are remediation attempts, rarely the culprit
-        if score > 0.2:
+            score *= w.revert_penalty
+        if score > w.suspect_threshold:
             out.append(
                 DeployCorrelation(
                     deploy=d,
@@ -108,16 +79,21 @@ def correlate_deploys(alert: Alert, deploys: list[Deploy]) -> list[DeployCorrela
     return sorted(out, key=lambda c: c.score, reverse=True)[:3]
 
 
-def match_runbooks(alert: Alert, runbooks: list[Runbook]) -> list[RunbookMatch]:
-    alert_terms = tokens(f"{alert.title} {alert.description} {alert.error_signature or ''}")
+def match_runbooks(
+    alert: Alert, runbooks: list[Runbook], w: Weights = DEFAULT_WEIGHTS
+) -> list[RunbookMatch]:
+    alert_terms = tokens(f"{alert.title} {alert.description} {alert.error_signature or ''}", w)
+    canon = w.canonical()
     out: list[RunbookMatch] = []
     for rb in runbooks:
         score = 0.0
         if alert.service in rb.services:
-            score += 0.5
-        kw_hits = [k for k in rb.keywords if k in alert_terms or k in alert.title.lower()]
-        score += min(0.5, 0.2 * len(kw_hits))
-        if score >= 0.3:
+            score += w.runbook_service_weight
+        kw_hits = [
+            k for k in rb.keywords if canon.get(k, k) in alert_terms or k in alert.title.lower()
+        ]
+        score += min(0.5, w.runbook_keyword_weight * len(kw_hits))
+        if score >= w.runbook_threshold:
             out.append(
                 RunbookMatch(
                     slug=rb.slug,
@@ -130,19 +106,23 @@ def match_runbooks(alert: Alert, runbooks: list[Runbook]) -> list[RunbookMatch]:
     return sorted(out, key=lambda m: m.score, reverse=True)[:2]
 
 
-def match_known_issues(alert: Alert, issues: list[KnownIssue]) -> list[KnownIssueMatch]:
+def match_known_issues(
+    alert: Alert, issues: list[KnownIssue], w: Weights = DEFAULT_WEIGHTS
+) -> list[KnownIssueMatch]:
     out: list[KnownIssueMatch] = []
-    alert_terms = tokens(alert.title + " " + alert.description)
+    alert_terms = tokens(alert.title + " " + alert.description, w)
     for issue in issues:
         if issue.status.lower() in {"done", "closed", "resolved"}:
             continue
         if alert.error_signature and issue.error_signature == alert.error_signature:
             out.append(KnownIssueMatch(issue=issue, reason="identical error signature", score=1.0))
             continue
-        overlap = alert_terms & tokens(issue.summary)
+        overlap = alert_terms & tokens(issue.summary, w)
         same_service = issue.service == alert.service
-        score = min(1.0, 0.25 * len(overlap)) + (0.3 if same_service else 0.0)
-        if score >= 0.55:
+        score = min(1.0, w.dupe_overlap_weight * len(overlap)) + (
+            w.dupe_same_service_weight if same_service else 0.0
+        )
+        if score >= w.dupe_threshold:
             out.append(
                 KnownIssueMatch(
                     issue=issue,
@@ -190,11 +170,13 @@ async def triage(
     known_issues: list[KnownIssue],
     window_minutes: int = 240,
     repo: str | None = None,
+    weights: Weights = DEFAULT_WEIGHTS,
 ) -> Brief:
+    w = weights
     deploys = await deploy_source.recent(alert.fired_at - timedelta(minutes=window_minutes))
-    corr = correlate_deploys(alert, deploys)
-    rbs = match_runbooks(alert, runbooks)
-    dupes = match_known_issues(alert, known_issues)
+    corr = correlate_deploys(alert, deploys, w)
+    rbs = match_runbooks(alert, runbooks, w)
+    dupes = match_known_issues(alert, known_issues, w)
 
     citations: list[Citation] = []
     if alert.url:
@@ -214,7 +196,7 @@ async def triage(
     if is_dup:
         k = dupes[0].issue.key
         likely = f"Recurrence of known issue {k}: {dupes[0].issue.summary}"
-        confidence = 0.9
+        confidence = w.dupe_confidence
         actions.append(f"Link alert to {k} instead of opening a new ticket")
         actions.append("Ping the owner of the existing ticket; do not page on-call")
     elif corr and is_revert(corr[0].deploy):
@@ -223,7 +205,7 @@ async def triage(
             f'Only recent change is a revert ({top.deploy.sha}, "{top.deploy.message}"); '
             "the incident may predate it or the revert may be incomplete"
         )
-        confidence = 0.4
+        confidence = w.revert_confidence
         actions.append("Confirm whether the revert fully rolled back; do not auto-dispatch a fix")
         actions.append("Page on-call: incident persists after a rollback attempt")
     elif corr:
@@ -234,7 +216,11 @@ async def triage(
             + (f"; keyword overlap: {', '.join(top.keyword_hits)}" if top.keyword_hits else "")
         )
         related = bool(top.keyword_hits) or top.service_match
-        confidence = min(0.95, 0.4 + top.score * 0.5) if related else 0.4
+        confidence = (
+            min(0.95, w.deploy_confidence_base + top.score * w.deploy_confidence_slope)
+            if related
+            else w.unrelated_confidence
+        )
         actions.append(
             f"Prepare rollback of {top.deploy.sha}; execute if error rate does not recover"
         )
@@ -243,7 +229,7 @@ async def triage(
         likely = (
             "No recent deploy or known issue matches; likely infrastructure or upstream dependency"
         )
-        confidence = 0.3
+        confidence = w.no_match_confidence
         actions.append("Page on-call: no confident automated diagnosis")
     for rb in rbs[:1]:
         actions += [f"Runbook '{rb.title}': {s}" for s in rb.remediation[:3]]
@@ -265,4 +251,6 @@ async def triage(
         fix_prompt=_fix_prompt(alert, corr, rbs, repo),
         citations=citations,
         is_duplicate=is_dup,
+        deploys_considered=deploys,
+        known_issues_considered=known_issues,
     )

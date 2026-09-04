@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     runbooks_dir: Path = Path("runbooks")
     known_issues_file: Path = Path("examples/known_issues.json")
     deploy_window_minutes: int = 240
+    weights_file: Path = Path("weights.yaml")
+    cases_dir: Path = Path("tests/regression/cases")
 
     github_repo: str | None = None  # owner/name
     github_token: str | None = None
